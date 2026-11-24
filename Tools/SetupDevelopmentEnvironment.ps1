@@ -206,15 +206,74 @@ function Ensure-AssistantSettings {
 
 function Find-Codex {
     $candidates = @(
-        (Join-Path $env:USERPROFILE ".local\bin\codex.exe"),
-        (Join-Path $env:APPDATA "npm\codex.cmd")
+        (Join-Path $env:USERPROFILE ".local\bin\codex.exe")
     )
-    foreach ($candidate in $candidates) {
-        if (Test-Path -LiteralPath $candidate) {
-            return $candidate
+    $commands = Get-Command "codex" -All -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandType -in @("Application", "ExternalScript") }
+    foreach ($command in $commands) {
+        if (-not [string]::IsNullOrWhiteSpace($command.Source)) {
+            $candidates += $command.Source
         }
     }
-    return Find-CommandPath "codex"
+    $candidates += Join-Path $env:APPDATA "npm\codex.cmd"
+
+    $seen = @{}
+    $firstCandidate = $null
+    $installedCandidates = @()
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate) -or
+            -not (Test-Path -LiteralPath $candidate)) {
+            continue
+        }
+        $key = $candidate.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) {
+            continue
+        }
+        $seen[$key] = $true
+        if ($null -eq $firstCandidate) {
+            $firstCandidate = $candidate
+        }
+
+        try {
+            $versionOutput = @(& $candidate --version 2>&1) |
+                ForEach-Object { $_.ToString() }
+        }
+        catch {
+            continue
+        }
+        $versionText = $versionOutput -join " "
+        $version = [version] "0.0"
+        $versionMatch = [regex]::Match(
+            $versionText,
+            "(?i)codex-cli\s+(\d+\.\d+\.\d+)(-[0-9A-Za-z.-]+)?")
+        $isPrerelease = $false
+        if ($versionMatch.Success) {
+            $isPrerelease = -not [string]::IsNullOrWhiteSpace(
+                $versionMatch.Groups[2].Value)
+            try {
+                $version = [version] $versionMatch.Groups[1].Value
+            }
+            catch {
+                # Keep an unparseable version below any recognizable version.
+            }
+        }
+        $installedCandidates += [pscustomobject] @{
+            Path = $candidate
+            Version = $version
+            IsPrerelease = $isPrerelease
+        }
+    }
+    if ($installedCandidates.Count -gt 0) {
+        $newest = $installedCandidates |
+            Sort-Object -Property @(
+                @{ Expression = "Version"; Descending = $true },
+                @{ Expression = "IsPrerelease"; Descending = $false }
+            ) |
+            Select-Object -First 1
+        Write-Host "Using newest installed Codex CLI: $($newest.Path) ($($newest.Version))"
+        return $newest.Path
+    }
+    return $firstCandidate
 }
 
 function Install-OfficialCodex {
@@ -238,38 +297,6 @@ function Install-OfficialCodex {
     Update-ProcessPath
 }
 
-function Get-CodexLoginStatus {
-    param([string] $CodexPath)
-
-    $previousPreference = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = "Continue"
-        $output = @(& $CodexPath login status 2>&1) |
-            ForEach-Object { $_.ToString() }
-        return @{
-            Success = $LASTEXITCODE -eq 0
-            Output = ($output -join [Environment]::NewLine).Trim()
-        }
-    }
-    finally {
-        $ErrorActionPreference = $previousPreference
-    }
-}
-
-function Invoke-CodexLogin {
-    param([string] $CodexPath)
-
-    $previousPreference = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = "Continue"
-        & $CodexPath login 2>&1 | Out-Host
-        return $LASTEXITCODE
-    }
-    finally {
-        $ErrorActionPreference = $previousPreference
-    }
-}
-
 function Ensure-Codex {
     $codex = Find-Codex
     if ($null -eq $codex) {
@@ -290,54 +317,7 @@ function Ensure-Codex {
         throw "Codex CLI is installed but could not be started."
     }
 
-    $loginStatus = Get-CodexLoginStatus -CodexPath $codex
-    $notAuthenticated = $loginStatus.Output -match `
-        '(?i)not logged in|not authenticated|login required|requires login'
-    if (-not $loginStatus.Success -and -not $notAuthenticated) {
-        Write-Host ""
-        Write-Host "The installed Codex CLI cannot load its current configuration:"
-        Write-Host $loginStatus.Output -ForegroundColor Yellow
-        if (-not (Read-Confirmation "Update Codex with the official OpenAI installer and retry?")) {
-            throw "Codex must be updated before this configuration can be used."
-        }
-        Install-OfficialCodex
-        $codex = Find-Codex
-        if ($null -eq $codex) {
-            throw "Codex update completed, but the executable could not be found."
-        }
-        & $codex --version
-        if ($LASTEXITCODE -ne 0) {
-            throw "The updated Codex CLI could not be started."
-        }
-        $loginStatus = Get-CodexLoginStatus -CodexPath $codex
-        $notAuthenticated = $loginStatus.Output -match `
-            '(?i)not logged in|not authenticated|login required|requires login'
-        if (-not $loginStatus.Success -and -not $notAuthenticated) {
-            throw "Codex still cannot load its configuration after the update: $($loginStatus.Output)"
-        }
-    }
-
-    if (-not $loginStatus.Success) {
-        Write-Host ""
-        Write-Host "Codex needs a ChatGPT account. The sign-in page will open in your browser."
-        if (-not (Read-Confirmation "Continue with Codex sign-in?")) {
-            Request-DifferentAssistant
-        }
-        $loginExitCode = Invoke-CodexLogin -CodexPath $codex
-        if ($loginExitCode -ne 0) {
-            if ($ChangeAssistant) {
-                Request-DifferentAssistant `
-                    -Message "Codex sign-in was cancelled or failed."
-            }
-            throw "Codex sign-in was cancelled or failed."
-        }
-        $loginStatus = Get-CodexLoginStatus -CodexPath $codex
-        if (-not $loginStatus.Success) {
-            throw "Codex did not report a valid authenticated session: $($loginStatus.Output)"
-        }
-    } else {
-        Write-Host "Codex authentication already configured."
-    }
+    Write-Host "Codex CLI detected. Start.bat will use its existing account session."
 }
 
 function Find-Claude {

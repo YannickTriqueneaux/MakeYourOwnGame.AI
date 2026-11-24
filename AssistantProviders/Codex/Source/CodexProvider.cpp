@@ -4,13 +4,21 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cctype>
 #include <cstdio>
+#include <cstdint>
+#include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <stdexcept>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -55,40 +63,12 @@ std::string ImageExtension(std::string_view mimeType) {
   return ".png";
 }
 
-std::filesystem::path ResolveExecutable(std::string configured) {
-  if (!configured.empty())
-    return configured;
 #if defined(_WIN32)
-  std::array<wchar_t, 32768> userProfile{};
-  const DWORD userProfileLength = GetEnvironmentVariableW(
-      L"USERPROFILE", userProfile.data(),
-      static_cast<DWORD>(userProfile.size()));
-  if (userProfileLength > 0 && userProfileLength < userProfile.size()) {
-    const auto nativeCodex =
-        std::filesystem::path(
-            std::wstring_view(userProfile.data(), userProfileLength)) /
-        ".local/bin/codex.exe";
-    if (std::filesystem::exists(nativeCodex))
-      return nativeCodex;
-  }
-  std::array<wchar_t, 32768> appData{};
-  const DWORD length = GetEnvironmentVariableW(
-      L"APPDATA", appData.data(), static_cast<DWORD>(appData.size()));
-  if (length > 0 && length < appData.size()) {
-    const auto npmCodex =
-        std::filesystem::path(std::wstring_view(appData.data(), length)) /
-        "npm/codex.cmd";
-    if (std::filesystem::exists(npmCodex))
-      return npmCodex;
-  }
-#endif
-  return "codex";
-}
-
-std::string ReadCodexFeatureList(const std::filesystem::path &executable) {
-#if defined(_WIN32)
-  const std::string command = "cmd /d /s /c \"\"" + executable.string() +
-                              "\" features list 2>&1\"";
+std::string RunCodexCommand(const std::filesystem::path &executable,
+                            std::string_view arguments) {
+  const std::string command =
+      "cmd /d /s /c \"\"" + executable.string() + "\" " +
+      std::string(arguments) + " 2>&1\"";
   std::array<char, 4096> buffer{};
   std::string output;
   FILE *pipe = _popen(command.c_str(), "r");
@@ -101,10 +81,161 @@ std::string ReadCodexFeatureList(const std::filesystem::path &executable) {
   }
   const int exitCode = _pclose(pipe);
   return exitCode == 0 ? output : std::string{};
+}
+#endif
+
+std::string ReadCodexFeatureList(const std::filesystem::path &executable) {
+#if defined(_WIN32)
+  return RunCodexCommand(executable, "features list");
 #else
   static_cast<void>(executable);
   return {};
 #endif
+}
+
+#if defined(_WIN32)
+struct CodexCliVersion {
+  std::array<std::uint64_t, 3> parts{};
+  bool prerelease = false;
+};
+
+std::optional<CodexCliVersion>
+ParseCodexCliVersion(std::string_view output) {
+  const auto marker = output.find("codex-cli");
+  if (marker == std::string_view::npos)
+    return std::nullopt;
+  std::size_t position = marker + std::string_view("codex-cli").size();
+  while (position < output.size() &&
+         std::isspace(static_cast<unsigned char>(output[position])))
+    ++position;
+
+  CodexCliVersion version;
+  for (std::size_t index = 0; index < version.parts.size(); ++index) {
+    const auto start = position;
+    while (position < output.size() &&
+           std::isdigit(static_cast<unsigned char>(output[position])))
+      ++position;
+    if (start == position)
+      return std::nullopt;
+    const auto [end, error] = std::from_chars(
+        output.data() + start, output.data() + position, version.parts[index]);
+    if (error != std::errc{} || end != output.data() + position)
+      return std::nullopt;
+    if (index + 1 < version.parts.size()) {
+      if (position >= output.size() || output[position] != '.')
+        return std::nullopt;
+      ++position;
+    }
+  }
+  version.prerelease = position < output.size() && output[position] == '-';
+  return version;
+}
+
+bool IsNewerCodexVersion(const CodexCliVersion &candidate,
+                         const CodexCliVersion &current) {
+  if (candidate.parts != current.parts)
+    return candidate.parts > current.parts;
+  return current.prerelease && !candidate.prerelease;
+}
+
+std::wstring ReadEnvironmentVariable(std::wstring_view name) {
+  const std::wstring variable(name);
+  std::array<wchar_t, 32768> value{};
+  const DWORD length = GetEnvironmentVariableW(
+      variable.c_str(), value.data(), static_cast<DWORD>(value.size()));
+  if (length == 0 || length >= value.size())
+    return {};
+  return {value.data(), length};
+}
+
+void AddCodexCandidate(std::vector<std::filesystem::path> &candidates,
+                       std::filesystem::path candidate) {
+  std::error_code error;
+  if (!std::filesystem::is_regular_file(candidate, error) || error)
+    return;
+  auto absolute = std::filesystem::absolute(candidate, error);
+  if (!error)
+    candidate = std::move(absolute);
+  candidate = candidate.lexically_normal();
+  auto key = candidate.native();
+  std::transform(key.begin(), key.end(), key.begin(),
+                 [](wchar_t character) {
+                   return static_cast<wchar_t>(std::towlower(character));
+                 });
+  for (const auto &existing : candidates) {
+    auto existingKey = existing.native();
+    std::transform(existingKey.begin(), existingKey.end(),
+                   existingKey.begin(), [](wchar_t character) {
+                     return static_cast<wchar_t>(std::towlower(character));
+                   });
+    if (existingKey == key)
+      return;
+  }
+  candidates.push_back(std::move(candidate));
+}
+
+std::vector<std::filesystem::path> FindCodexCandidates() {
+  std::vector<std::filesystem::path> candidates;
+  const auto userProfile = ReadEnvironmentVariable(L"USERPROFILE");
+  if (!userProfile.empty())
+    AddCodexCandidate(candidates, std::filesystem::path(userProfile) /
+                                     ".local/bin/codex.exe");
+
+  const auto localAppData = ReadEnvironmentVariable(L"LOCALAPPDATA");
+  if (!localAppData.empty())
+    AddCodexCandidate(candidates,
+                      std::filesystem::path(localAppData) /
+                          "Programs/OpenAI/Codex/bin/codex.exe");
+
+  const auto appData = ReadEnvironmentVariable(L"APPDATA");
+  if (!appData.empty())
+    AddCodexCandidate(candidates,
+                      std::filesystem::path(appData) / "npm/codex.cmd");
+
+  const auto pathValue = ReadEnvironmentVariable(L"PATH");
+  std::size_t start = 0;
+  while (start <= pathValue.size()) {
+    const auto end = pathValue.find(L';', start);
+    auto directory = pathValue.substr(
+        start, end == std::wstring::npos ? std::wstring::npos : end - start);
+    if (directory.size() >= 2 && directory.front() == L'"' &&
+        directory.back() == L'"') {
+      directory = directory.substr(1, directory.size() - 2);
+    }
+    if (!directory.empty()) {
+      const std::filesystem::path folder(directory);
+      AddCodexCandidate(candidates, folder / "codex.exe");
+      AddCodexCandidate(candidates, folder / "codex.cmd");
+      AddCodexCandidate(candidates, folder / "codex.bat");
+    }
+    if (end == std::wstring::npos)
+      break;
+    start = end + 1;
+  }
+  return candidates;
+}
+#endif
+
+std::filesystem::path ResolveExecutable(std::string configured) {
+  if (!configured.empty())
+    return configured;
+#if defined(_WIN32)
+  std::filesystem::path newestExecutable;
+  std::optional<CodexCliVersion> newestVersion;
+  for (const auto &candidate : FindCodexCandidates()) {
+    const auto version =
+        ParseCodexCliVersion(RunCodexCommand(candidate, "--version"));
+    if (newestExecutable.empty() ||
+        (version && (!newestVersion ||
+                     IsNewerCodexVersion(*version, *newestVersion)))) {
+      newestExecutable = candidate;
+      newestVersion = version;
+    }
+  }
+  if (!newestExecutable.empty())
+    return newestExecutable;
+#endif
+  return "codex";
 }
 
 class CodexProvider final : public Development::AssistantProvider {

@@ -29,10 +29,10 @@ the build output.
 
 On an already configured checkout, enter `a` in `Start.bat`'s game-selection
 menu to choose another provider. The setup script rewrites only the provider
-selection, reuses existing installations and authentication, and installs or
-signs in the newly selected CLI only when required. Declining a CLI sign-in
-returns to the provider selector rather than leaving startup trapped on the
-same unauthenticated provider.
+selection, reuses existing installations and authentication, and installs a
+missing CLI when required. Codex keeps using its existing CLI account session;
+the setup script does not run `codex login`. Claude Code sign-in remains part
+of setup when Claude Code has no existing authentication.
 
 ## Shared assistant prompts
 
@@ -61,8 +61,10 @@ existing ChatGPT sign-in. Its settings are stored in
 ```
 
 - An empty `executable` enables automatic discovery. On Windows the provider
-  first checks `%APPDATA%/npm/codex.cmd`, then falls back to `codex` from
-  `PATH`.
+  checks the native installer, the Codex app installation, the npm shim, and
+  `PATH`, then uses the executable with the highest `codex --version`.
+- A non-empty `executable` explicitly selects that executable and bypasses
+  automatic version discovery.
 - An empty `model` lets Codex use the model selected by the user's Codex
   configuration or the current Codex default. This is the repository default
   so new users receive a model compatible with their ChatGPT plan.
@@ -83,9 +85,10 @@ read-only mode. Game reads, writes, builds, reloads, and recovery operations
 must use the restricted Game Tools MCP server. The provider does not store
 ChatGPT credentials in this repository.
 
-`Start.bat` uses `Tools/SetupDevelopmentEnvironment.ps1` to install a missing
-Codex CLI through OpenAI's official Windows installer, run `codex login` when
-no cached session exists, and skip both steps when they are already complete.
+`Start.bat` uses `Tools/SetupDevelopmentEnvironment.ps1` to find the newest
+installed Codex CLI by version, install one through OpenAI's official Windows
+installer when none is installed, and leave account authentication to the
+installed CLI's existing session.
 
 The provider enables Codex MCP tool discovery when the installed CLI reports
 the corresponding feature flag. Current builds defer custom MCP tools until

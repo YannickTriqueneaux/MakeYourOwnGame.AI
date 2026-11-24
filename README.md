@@ -56,10 +56,10 @@ Requirements:
 
 - Windows 10 or 11 with PowerShell and Windows Package Manager (`winget`)
 
-`Start.bat` checks Git, CMake, Visual Studio C++ Build Tools, assistant
-configuration, and authentication. Already configured items are skipped. When
-a required development tool is missing, the script explains what is needed and
-asks for confirmation before installing it with `winget`.
+`Start.bat` checks Git, CMake, Visual Studio C++ Build Tools, and assistant
+configuration. Already configured items are skipped. When a required
+development tool is missing, the script explains what is needed and asks for
+confirmation before installing it with `winget`.
 
 Run:
 
@@ -73,8 +73,8 @@ Start.bat
 2. creates the local assistant configuration on a fresh clone and asks whether
    to use Codex CLI, Claude Code, or the OpenAI API;
 3. installs the selected CLI through its official installer when needed;
-4. opens the browser when Codex or Claude Code is not authenticated, or
-   requests an API key when the OpenAI API provider is selected;
+4. uses the Codex CLI's existing account session, starts Claude Code sign-in
+   when needed, or requests an API key when the OpenAI API provider is selected;
 5. lists the projects under `Games/` and offers to create a new one;
 6. asks which game to open, or asks for a name and copies `BaseGame`;
 7. configures and builds that game in its private build directory; and
