@@ -353,6 +353,27 @@ int main() {
     input.ClearAutoTestPressedKeys();
     Require(!input.WasPressed(Engine::Key::Q),
             "Pressed keys were not cleared.");
+    input.SetAutoTestKeyDown(Engine::Key::A, true);
+    input.SetAutoTestKeyDown(Engine::Key::S, true);
+    input.SetAutoTestKeyDown(Engine::Key::D, true);
+    Require(input.IsDown(Engine::Key::A) && input.IsDown(Engine::Key::S) &&
+                input.IsDown(Engine::Key::D),
+            "First-person movement keys were not injected.");
+    input.SetAutoTestKeyPressed(Engine::Key::Q, true);
+    input.SetMouseCaptured(true);
+    input.SetGameplayInputEnabled(false);
+    Require(!input.IsDown(Engine::Key::Right) &&
+                !input.WasPressed(Engine::Key::Q) &&
+                !input.IsMouseDown(Engine::MouseButton::Left),
+            "Released gameplay input leaked held keys or firing.");
+    input.SetMouseCaptured(true);
+    input.Update();
+    const auto releasedMouseDelta = input.GetMouseDelta();
+    Require(releasedMouseDelta.x == 0 && releasedMouseDelta.y == 0,
+            "Released gameplay input leaked relative aiming.");
+    input.SetGameplayInputEnabled(true);
+    Require(input.IsDown(Engine::Key::Right),
+            "Gameplay input did not resume after returning to the game.");
 
     auto general = NEW_MEMORY(GeneralAllocation, 42);
     GeneralAllocation *firstAddress = general.get();

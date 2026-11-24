@@ -1,5 +1,6 @@
 #include "AssistantProviders/Codex/CodexFeatureDetection.h"
 #include "AssistantProviders/Codex/CodexEventParser.h"
+#include "AssistantProviders/Codex/CodexPricing.h"
 #include "Development/AssistantProvider.h"
 
 #include <algorithm>
@@ -252,6 +253,8 @@ public:
                        "GameToolsMcpServer.exe";
     model_ = settings.value("model", "");
     reasoningEffort_ = settings.value("reasoningEffort", "high");
+    pricing_ = AssistantProviders::Codex::CodexPricing(
+        settings.value("pricing", nlohmann::json::object()));
   }
 
   bool IsConfigured() const override { return !executable_.empty(); }
@@ -260,8 +263,8 @@ public:
     return model_.empty() ? displayName_ : model_;
   }
   Development::AssistantCostEstimate
-  EstimateCost(const Development::AssistantTokenUsage &) const override {
-    return {};
+  EstimateCost(const Development::AssistantTokenUsage &usage) const override {
+    return pricing_.EstimateCost(model_, usage);
   }
 
   Development::AssistantResponse CreateResponse(
@@ -294,6 +297,10 @@ public:
     }
     onEvent({Development::AssistantStreamEventType::Status,
              "Codex is working through the ChatGPT account."});
+    if (pricing_.EstimateCost(model_, {}).available)
+      onEvent({Development::AssistantStreamEventType::Status,
+               "Cost estimate uses the configured observed average for " +
+                   model_ + "; input, output and cache share one rate."});
     onEvent({Development::AssistantStreamEventType::Status,
              "Checking Codex MCP compatibility."});
     std::call_once(mcpFeatureDetectionOnce_, [this]() {
@@ -408,6 +415,8 @@ private:
   std::filesystem::path mcpExecutable_;
   std::string model_;
   std::string reasoningEffort_;
+  AssistantProviders::Codex::CodexPricing pricing_{
+      nlohmann::json::object()};
   mutable std::once_flag mcpFeatureDetectionOnce_;
   mutable bool enableMcpDiscovery_ = false;
   std::string displayName_ = "Codex (ChatGPT account)";

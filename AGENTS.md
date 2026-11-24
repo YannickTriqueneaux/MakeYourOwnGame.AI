@@ -10,6 +10,16 @@ For synthesized sound effects, instruments, music, audio playback, or resumable 
 
 For every player-visible gameplay or presentation change, proactively consider audio even when the user did not mention it. Add focused sound effects, ambience, or music when they naturally improve feedback, atmosphere, or game feel; read the procedural-audio skill before doing so. Do not add audio mechanically when silence or restraint better serves the idea.
 
+Game input must use `Engine::InputSystem`. Request mouse capture through
+`input.SetMouseCaptured(true/false)`, read relative aiming with
+`input.GetMouseDelta()`, and read buttons with `input.IsMouseDown()`.
+Never call `SetCursorPos`, `ClipCursor`, `SetCapture`, `GetAsyncKeyState`,
+raylib cursor capture, or foreground-window mouse recentering directly from
+Game code. The Application owns TAB and focus handling: TAB releases the mouse
+and suspends gameplay input/updates while the assistant is active; Game code
+must not override that release. Capture is transient platform state, not
+serialized gameplay state.
+
 When a request replaces the entire game, genre, core loop, or creative identity,
 treat the old gameplay as obsolete. Do not silently reduce the work to a reskin
 or first conversion pass. Create replacement types with new stable TypeIDs,

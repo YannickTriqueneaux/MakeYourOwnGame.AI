@@ -81,7 +81,8 @@ int main(int argc, char **argv) {
             std::string(MAKE_YOUR_OWN_GAME_AI_GAME_PROJECT) + " - Game",
         .focusWindowTitle =
             std::string(MAKE_YOUR_OWN_GAME_AI_GAME_PROJECT) + " - AI Assistant",
-        .verticalSync = gameConfig.verticalSync};
+        .verticalSync = gameConfig.verticalSync,
+        .backgroundUpdate = [&game] { game.ProcessReloadRequest(); }};
 
     Engine::Application application(std::move(config));
     {

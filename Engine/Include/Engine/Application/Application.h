@@ -2,6 +2,7 @@
 
 #include "Engine/Core/Export.h"
 
+#include <functional>
 #include <string>
 
 namespace Engine {
@@ -14,6 +15,8 @@ struct ApplicationConfig {
   std::string windowTitle = "Engine Application";
   std::string focusWindowTitle;
   bool verticalSync = true;
+  // Host maintenance continues while gameplay input and updates are suspended.
+  std::function<void()> backgroundUpdate;
 };
 
 class ENGINE_API Application {

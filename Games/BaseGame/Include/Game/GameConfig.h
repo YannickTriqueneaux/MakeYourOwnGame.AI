@@ -7,7 +7,7 @@ namespace GameConfig {
 inline constexpr int PlayAreaWidth = 1280;
 inline constexpr int PlayAreaHeight = 720;
 inline constexpr int TargetFramesPerSecond = 144;
-inline constexpr const char *WindowTitle = "Entity Arena";
+inline constexpr const char *WindowTitle = "Blackjack";
 
 inline Engine::GameApplicationConfig CreateApplicationConfig() {
   return {.windowWidth = PlayAreaWidth,
@@ -17,7 +17,5 @@ inline Engine::GameApplicationConfig CreateApplicationConfig() {
           .verticalSync = true};
 }
 
-inline constexpr Engine::Color BackgroundColor{15, 18, 28, 255};
-inline constexpr Engine::Color GridColor{31, 36, 51, 255};
-inline constexpr int GridSize = 64;
+inline constexpr Engine::Color BackgroundColor{12, 58, 47, 255};
 } // namespace GameConfig

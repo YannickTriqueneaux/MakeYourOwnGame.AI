@@ -1,0 +1,5 @@
+#pragma once
+#include "Engine/Math/Vector2.h"
+namespace Engine { class InputSystem; }
+struct PlayerCommand { Engine::Vector2 movement{}; float yawDelta=0, pitchDelta=0; bool firing=false; };
+class GameInput { public: [[nodiscard]] PlayerCommand BuildPlayerCommand(const Engine::InputSystem &input) const; };

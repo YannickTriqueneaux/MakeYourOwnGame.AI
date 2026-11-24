@@ -55,8 +55,16 @@ existing ChatGPT sign-in. Its settings are stored in
 {
   "executable": "",
   "gameToolsMcpExecutable": "",
-  "model": "",
-  "reasoningEffort": "low"
+  "model": "gpt-6-luna",
+  "reasoningEffort": "low",
+  "pricing": {
+    "basis": "observedAverage",
+    "models": {
+      "gpt-6-luna": { "usdPerMillionTokens": 0.0215 },
+      "gpt-6.1-sol": { "usdPerMillionTokens": 0.1874 },
+      "gpt-5.6-luna": { "usdPerMillionTokens": 0.1121 }
+    }
+  }
 }
 ```
 
@@ -66,9 +74,22 @@ existing ChatGPT sign-in. Its settings are stored in
 - A non-empty `executable` explicitly selects that executable and bypasses
   automatic version discovery.
 - An empty `model` lets Codex use the model selected by the user's Codex
-  configuration or the current Codex default. This is the repository default
-  so new users receive a model compatible with their ChatGPT plan.
+  configuration or the current Codex default. In that mode the provider
+  reports costs as unavailable because it cannot identify the effective model
+  from the CLI's token events.
 - A non-empty `model` is passed explicitly to `codex exec --model`.
+- `pricing.models` supplies an approximate USD rate per million total tokens
+  for each explicitly selected model. These values are observed averages
+  approved from the user's gateway usage screenshot, not official token
+  tariffs. They combine input, output, cache reads and cache writes; future
+  cache ratios or workload changes can change the effective cost. The provider
+  multiplies the selected rate by reported input plus output tokens, without
+  adding cached input a second time. Missing or invalid rates remain
+  unavailable. Dated model snapshots use their configured base-model rate.
+- Edit `model` to select another model from the table. Rebuild/restart the
+  assistant to apply JSON changes. Costs appear as estimates in the existing
+  last-prompt and session-total display, with an activity message explaining
+  that an observed average is used.
 - `reasoningEffort` is passed as Codex model configuration.
 - Pasted images are decoded to temporary files, passed with `--image`, and
   deleted after the response.

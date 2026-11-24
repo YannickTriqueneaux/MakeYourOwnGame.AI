@@ -46,7 +46,11 @@ The game and assistant run in separate windows:
 - `<game-name> - Game`
 - `<game-name> - AI Assistant`
 
-Press `Tab` in either window to focus its partner. The assistant conversation
+Press `Tab` in the game to release the mouse and focus the assistant, even when
+the game captures the cursor for aiming. Gameplay input and updates pause while
+the mouse is released, so the game cannot recenter it or fire while you use the
+assistant. Game reloads remain available. Returning to the game resumes play.
+Press `Tab` in the assistant to return to the game. The assistant conversation
 survives Game DLL reloads, allowing an ongoing discussion instead of isolated
 one-shot prompts.
 
@@ -333,6 +337,12 @@ therefore configuration data rather than compiled constants. AssistantHost
 uses them to display an estimated cost for the latest completed prompt and for
 the complete AssistantHost session. Update the pricing block when OpenAI
 changes a model's rates.
+
+The Codex provider also supports manual estimates in
+`AssistantProviders/Codex/CodexProvider.settings.json`. Its `pricing.models`
+table uses observed average USD costs per million total tokens. The selected
+`model` must have an entry in that table. These averages combine input, output,
+and cache usage; they are approximate workload estimates, not official rates.
 
 ## Manual builds
 

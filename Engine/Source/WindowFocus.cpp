@@ -52,6 +52,13 @@ std::wstring ToWide(std::string_view value) {
 } // namespace
 
 namespace Engine {
+void WindowFocus::ReleaseMouseCapture() {
+#if defined(_WIN32)
+  ClipCursor(nullptr);
+  ReleaseCapture();
+#endif
+}
+
 bool WindowFocus::FocusWindowByTitle(std::string_view windowTitle) {
 #if defined(_WIN32)
   WindowSearch search{.expectedTitle = ToWide(windowTitle)};

@@ -212,6 +212,7 @@ endif()
 add_library(AssistantProviderCodex SHARED
     AssistantProviders/Codex/Source/CodexProvider.cpp
     AssistantProviders/Codex/Source/CodexFeatureDetection.cpp
+    AssistantProviders/Codex/Source/CodexPricing.cpp
     AssistantProviders/Codex/Source/CodexEventParser.cpp)
 target_include_directories(AssistantProviderCodex PRIVATE
     AssistantProviders/Codex/Include Development/Include)
@@ -236,9 +237,9 @@ target_compile_definitions(GameToolsMcpServer PRIVATE
 
 add_dependencies(AssistantHost AssistantProviderOpenAI AssistantProviderCodex
                  AssistantProviderClaude GameToolsMcpServer)
-add_custom_command(
-    TARGET AssistantHost
-    POST_BUILD
+add_custom_target(AssistantRuntimeSettings
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        $<TARGET_FILE_DIR:AssistantHost>
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_SOURCE_DIR}/AssistantHost/Config/settings.json
         $<TARGET_FILE_DIR:AssistantHost>/settings.json
@@ -254,7 +255,9 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_SOURCE_DIR}/AssistantProviders/Claude/ClaudeProvider.settings.json
         $<TARGET_FILE_DIR:AssistantHost>/ClaudeProvider.settings.json
+    VERBATIM
 )
+add_dependencies(AssistantHost AssistantRuntimeSettings)
 
 add_executable(Launcher Launcher/Source/main.cpp)
 target_link_libraries(Launcher PRIVATE Engine)
@@ -349,6 +352,7 @@ if(BUILD_TESTING)
         AssistantHost/Source/AssistantPromptConfig.cpp
         AssistantHost/Source/MidiAttachmentProvider.cpp
         AssistantProviders/Codex/Source/CodexFeatureDetection.cpp
+        AssistantProviders/Codex/Source/CodexPricing.cpp
         AssistantProviders/Codex/Source/CodexEventParser.cpp
         AssistantProviders/Claude/Source/ClaudeEventParser.cpp
     )

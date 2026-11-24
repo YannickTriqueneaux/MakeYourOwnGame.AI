@@ -24,6 +24,7 @@ public:
 
   [[nodiscard]] Engine::GameApplicationConfig GetApplicationConfig() const;
   void RequestReload();
+  void ProcessReloadRequest();
   [[nodiscard]] std::string GetReloadStatus() const;
   void Unload();
 
@@ -35,14 +36,12 @@ public:
   void Shutdown() override;
 #if defined(ENGINE_AUTOTESTS)
   void SerializeAutoTestState(Engine::Serializer &serializer) override;
-  void ProcessAutoTestReload();
 #endif
 
 private:
   struct LoadedGame;
 
   [[nodiscard]] std::unique_ptr<LoadedGame> LoadNextGeneration();
-  void ProcessReloadRequest();
   void SetReloadStatus(std::string status);
 
   std::filesystem::path sourceDll_;

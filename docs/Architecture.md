@@ -40,6 +40,16 @@ only AssistantHost consumes it, place it under `AssistantHost`. If it is a
 development protocol shared by AssistantHost and GameHost, place its neutral
 contract under `Development` while keeping each endpoint in its owning host.
 
+## Gameplay input and cursor capture
+
+`InputSystem` owns mouse capture requests and relative aiming. Game code uses
+`SetMouseCaptured`, `GetMouseDelta`, and `IsMouseDown` rather than OS input or
+cursor warping. Application disables gameplay input/updates when TAB releases
+the cursor or the window loses focus. Its generic `backgroundUpdate` callback
+lets GameHost call `ReloadableGame::ProcessReloadRequest` without invoking
+Game input. Rendering continues, and capture resumes on return. This keeps
+Game reloads usable while the assistant has focus.
+
 ## Incremental compilation and shadow DLLs
 
 CMake and the compiler reuse previous build artifacts, so unchanged translation

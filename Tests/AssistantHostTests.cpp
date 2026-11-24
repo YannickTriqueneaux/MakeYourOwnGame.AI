@@ -2,12 +2,15 @@
 #include "AssistantHost/MidiAttachmentProvider.h"
 #include "AssistantProviders/Codex/CodexFeatureDetection.h"
 #include "AssistantProviders/Codex/CodexEventParser.h"
+#include "AssistantProviders/Codex/CodexPricing.h"
 #include "AssistantProviders/Claude/ClaudeEventParser.h"
 
 #include <cstdint>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -16,6 +19,42 @@ namespace {
 void Require(bool condition, const char *message) {
   if (!condition)
     throw std::runtime_error(message);
+}
+
+void TestCodexPricing() {
+  const auto settings = nlohmann::json::parse(R"({
+    "basis": "observedAverage",
+    "models": {
+      "gpt-6-luna": {"usdPerMillionTokens": 0.0215},
+      "gpt-6.1-sol": {"usdPerMillionTokens": 0.1874},
+      "gpt-5.6-luna": {"usdPerMillionTokens": 0.1121},
+      "invalid": {"usdPerMillionTokens": -1},
+      "invalid-string": {"usdPerMillionTokens": "2"}
+    }
+  })");
+  const AssistantProviders::Codex::CodexPricing pricing(settings);
+  const Development::AssistantTokenUsage usage{900'000, 800'000, 100'000};
+  const auto estimate = pricing.EstimateCost("gpt-6-luna", usage);
+  Require(estimate.available && std::abs(estimate.usd - 0.0215) < 1e-9,
+          "Average Codex pricing double-counted cached input tokens.");
+  Require(std::abs(pricing.EstimateCost("gpt-6.1-sol", usage).usd -
+                   0.1874) < 1e-9 &&
+              std::abs(pricing.EstimateCost("gpt-5.6-luna", usage).usd -
+                       0.1121) < 1e-9,
+          "Codex model selection applied the wrong configured rate.");
+  Require(pricing.EstimateCost("gpt-6-luna-2026-11-24", usage).available,
+          "Codex snapshot model did not use its configured base rate.");
+  Require(!pricing.EstimateCost("", usage).available &&
+              !pricing.EstimateCost("unknown", usage).available &&
+              !pricing.EstimateCost("gpt-6-luna-other", usage).available,
+          "An unknown Codex model silently used another model's rate.");
+  Require(!pricing.EstimateCost("invalid", usage).available &&
+              !pricing.EstimateCost("invalid-string", usage).available,
+          "Invalid Codex pricing was accepted.");
+  const AssistantProviders::Codex::CodexPricing absent(
+      nlohmann::json::object());
+  Require(!absent.EstimateCost("gpt-6-luna", usage).available,
+          "Missing Codex pricing reported a fabricated cost.");
 }
 
 void TestAssistantPromptConfig() {
@@ -157,6 +196,7 @@ int main() {
     TestAssistantPromptConfig();
     TestMidiParsing();
     TestCodexEventParsing();
+    TestCodexPricing();
     TestCodexFeatureDetection();
     TestClaudeEventParsing();
     std::cout << "AssistantHost tests passed.\n";

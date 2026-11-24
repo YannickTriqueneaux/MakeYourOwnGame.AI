@@ -93,10 +93,6 @@ void ReloadableGame::SerializeAutoTestState(Engine::Serializer &serializer) {
   loaded_->instance->SerializeAutoTestState(serializer);
 }
 
-void ReloadableGame::ProcessAutoTestReload() {
-  std::scoped_lock lock(gameMutex_);
-  ProcessReloadRequest();
-}
 #endif
 
 std::unique_ptr<ReloadableGame::LoadedGame>
@@ -143,6 +139,7 @@ ReloadableGame::LoadNextGeneration() {
 }
 
 void ReloadableGame::ProcessReloadRequest() {
+  std::scoped_lock lock(gameMutex_);
   if (!reloadRequested_.exchange(false)) {
     return;
   }

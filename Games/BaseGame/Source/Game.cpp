@@ -3,454 +3,157 @@
 #include "Game/GameConfig.h"
 
 #include "Engine/Core/Profile.h"
+#include "Engine/Gameplay/World.h"
 #include "Engine/Graphics/RenderContext.h"
+#include "Engine/Graphics/Renderer2D.h"
+#include "Engine/Graphics/Renderer3D.h"
 #include "Engine/Input/InputSystem.h"
-#include "Engine/Serialization/Serializer.h"
-
-#if defined(_WIN32)
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#ifdef DrawText
-#undef DrawText
-#endif
-#endif
+#include "Engine/Input/Key.h"
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <string>
-#include <vector>
 
 namespace {
-using Entity = Engine::Gameplay::Entity;
-using ObjectID = Engine::Gameplay::ObjectID;
-using ObjectRef = Engine::Gameplay::ObjectRef<Entity>;
-using TypeID = Engine::Gameplay::TypeID;
+using Engine::Color;
+using Engine::Vector2;
+using Engine::Vector3;
+using Blackjack::Card;
 
-constexpr float PlayerRadius = 12.0f;
-constexpr float EnemyRadius = 17.0f;
-constexpr float ProjectileRadius = 4.0f;
-constexpr std::size_t MaximumEnemies = 288;
-constexpr int PlayerMaxHealth = 20;
+constexpr Color Gold{238, 195, 101, 255};
+constexpr Color Cream{244, 239, 221, 255};
+constexpr Color Muted{185, 207, 190, 255};
+constexpr Color Red{190, 58, 55, 255};
+constexpr Color Ink{27, 35, 33, 255};
+constexpr Color Felt{18, 91, 68, 255};
+constexpr Color CardBack{36, 75, 57, 255};
+constexpr float CardSpacing = 1.0f;
+constexpr float CardZ = 1.45f;
+constexpr float DealerZ = -1.10f;
+constexpr float PlayerZ = 1.10f;
 
-constexpr std::array PlayerShotPitch{Engine::AudioEnvelopePoint{0.0f, 1.0f},
-                                     Engine::AudioEnvelopePoint{0.14f, 0.24f}};
-constexpr std::array PlayerShotVoices{Engine::ProceduralSoundVoice{
-    .waveform = Engine::AudioWaveform::Square,
-    .frequencyHz = 980.0f,
-    .volume = 0.55f,
-    .dutyCycle = 0.3f,
-    .envelope = {.attackSeconds = 0.002f,
-                 .decaySeconds = 0.025f,
-                 .sustainLevel = 0.5f,
-                 .releaseSeconds = 0.035f},
-    .frequencyMultiplier = {.points = PlayerShotPitch},
-    .filter = Engine::AudioFilterType::LowPass,
-    .filterCutoffHz = 7'000.0f}};
-constexpr Engine::ProceduralSoundDefinition PlayerShotPatch{
-    .durationSeconds = 0.14f, .voices = PlayerShotVoices};
-
-constexpr std::array EnemyShotPitch{Engine::AudioEnvelopePoint{0.0f, 1.0f},
-                                    Engine::AudioEnvelopePoint{0.2f, 0.55f}};
-constexpr std::array EnemyShotVoices{Engine::ProceduralSoundVoice{
-    .waveform = Engine::AudioWaveform::Saw,
-    .frequencyHz = 310.0f,
-    .volume = 0.42f,
-    .envelope = {.attackSeconds = 0.006f,
-                 .decaySeconds = 0.04f,
-                 .sustainLevel = 0.45f,
-                 .releaseSeconds = 0.06f},
-    .frequencyMultiplier = {.points = EnemyShotPitch},
-    .filter = Engine::AudioFilterType::LowPass,
-    .filterCutoffHz = 3'200.0f}};
-constexpr Engine::ProceduralSoundDefinition EnemyShotPatch{
-    .durationSeconds = 0.2f, .voices = EnemyShotVoices};
-
-constexpr std::array ImpactVoices{
-    Engine::ProceduralSoundVoice{.waveform = Engine::AudioWaveform::Noise,
-                                 .frequencyHz = 120.0f,
-                                 .volume = 0.42f,
-                                 .envelope = {.attackSeconds = 0.0f,
-                                              .decaySeconds = 0.025f,
-                                              .sustainLevel = 0.15f,
-                                              .releaseSeconds = 0.07f},
-                                 .filter = Engine::AudioFilterType::HighPass,
-                                 .filterCutoffHz = 650.0f,
-                                 .noiseSeed = 0x51f15eU},
-    Engine::ProceduralSoundVoice{.waveform = Engine::AudioWaveform::Triangle,
-                                 .frequencyHz = 95.0f,
-                                 .volume = 0.3f,
-                                 .envelope = {.attackSeconds = 0.0f,
-                                              .decaySeconds = 0.02f,
-                                              .sustainLevel = 0.2f,
-                                              .releaseSeconds = 0.08f}}};
-constexpr Engine::ProceduralSoundDefinition ImpactPatch{.durationSeconds = 0.1f,
-                                                        .voices = ImpactVoices};
-
-float DistanceSquared(Engine::Vector2 left, Engine::Vector2 right) {
-  const float x = left.x - right.x;
-  const float y = left.y - right.y;
-  return x * x + y * y;
+Vector2 ProjectToScreen(Vector3 point, int width, int height) {
+  constexpr float halfSqrtTwo = 0.70710678f;
+  constexpr float isoHorizontal = 0.40824829f;
+  constexpr float isoVertical = 0.81649658f;
+  const float pixelsPerUnit = static_cast<float>(height) / 12.5f;
+  const float horizontal = (point.x - point.z) * halfSqrtTwo;
+  const float vertical = -isoHorizontal * point.x + isoVertical * point.y -
+                         isoHorizontal * point.z;
+  return {static_cast<float>(width) * 0.5f + horizontal * pixelsPerUnit,
+          static_cast<float>(height) * 0.5f - vertical * pixelsPerUnit};
 }
 
-void DrawGrid(Engine::Renderer2D &renderer) {
-  for (int x = 0; x < renderer.GetWidth(); x += GameConfig::GridSize) {
-    renderer.DrawLine(
-        {static_cast<float>(x), 0.0f},
-        {static_cast<float>(x), static_cast<float>(renderer.GetHeight())}, 1.0f,
-        GameConfig::GridColor);
+std::string CardRank(std::uint8_t rank) {
+  if (rank == 1) return "A";
+  if (rank == 11) return "J";
+  if (rank == 12) return "Q";
+  if (rank == 13) return "K";
+  return std::to_string(rank);
+}
+
+char CardSuit(std::uint8_t suit) {
+  constexpr std::array<char, 4> suits{'C', 'D', 'H', 'S'};
+  return suits[std::min<std::size_t>(suit, suits.size() - 1)];
+}
+
+std::string OutcomeText(Blackjack::Result result) {
+  switch (result) {
+  case Blackjack::Result::PlayerWin: return "YOU WIN";
+  case Blackjack::Result::DealerWin: return "DEALER WINS";
+  case Blackjack::Result::Push: return "PUSH - BET RETURNED";
+  case Blackjack::Result::Blackjack: return "BLACKJACK!  3:2 PAYOUT";
+  case Blackjack::Result::Bust: return "BUST - DEALER WINS";
+  case Blackjack::Result::None: return {};
   }
-  for (int y = 0; y < renderer.GetHeight(); y += GameConfig::GridSize) {
-    renderer.DrawLine(
-        {0.0f, static_cast<float>(y)},
-        {static_cast<float>(renderer.GetWidth()), static_cast<float>(y)}, 1.0f,
-        GameConfig::GridColor);
+  return {};
+}
+
+void DrawCardOverlay(Engine::Renderer2D &renderer, float centerX, float centerY,
+                     Card card, bool hidden) {
+  if (hidden) {
+    renderer.DrawText("?", {centerX - 10.0f, centerY - 16.0f}, 30, Gold);
+    return;
   }
-}
-
-int MaxHealthForFaction(BaseGame::Faction faction) {
-  return faction == BaseGame::Faction::Player ? PlayerMaxHealth : 3;
-}
-
-Engine::Vector2 NormalizeOrZero(Engine::Vector2 value) {
-  const float lengthSquared = value.x * value.x + value.y * value.y;
-  if (lengthSquared <= 0.0001f)
-    return {};
-  const float inverseLength = 1.0f / std::sqrt(lengthSquared);
-  return value * inverseLength;
-}
-
-Engine::Vector2 MouseAimFromPlayer(Engine::Vector2 playerPosition,
-                                   Engine::Vector2 fallback) {
-#if defined(_WIN32)
-  POINT mouse{};
-  if (::GetCursorPos(&mouse)) {
-    HWND window = ::GetForegroundWindow();
-    if (window && ::ScreenToClient(window, &mouse)) {
-      const Engine::Vector2 direction{
-          static_cast<float>(mouse.x) - playerPosition.x,
-          static_cast<float>(mouse.y) - playerPosition.y};
-      const Engine::Vector2 normalized = NormalizeOrZero(direction);
-      if (normalized.x != 0.0f || normalized.y != 0.0f)
-        return normalized;
-    }
-  }
-#endif
-  return fallback;
-}
-
-float HealthRatio(const BaseGame::Health *health) {
-  if (!health)
-    return 0.0f;
-  const int maxHealth = MaxHealthForFaction(health->GetFaction());
-  if (maxHealth <= 0)
-    return 0.0f;
-  return std::clamp(static_cast<float>(health->HitPoints()) /
-                        static_cast<float>(maxHealth),
-                    0.0f, 1.0f);
-}
-
-Engine::Color HealthColor(float ratio) {
-  ratio = std::clamp(ratio, 0.0f, 1.0f);
-  if (ratio > 0.5f) {
-    const float t = (ratio - 0.5f) * 2.0f;
-    return {static_cast<std::uint8_t>(255.0f * (1.0f - t) + 74.0f * t),
-            static_cast<std::uint8_t>(203.0f * (1.0f - t) + 222.0f * t),
-            static_cast<std::uint8_t>(0.0f * (1.0f - t) + 92.0f * t), 255};
-  }
-  const float t = ratio * 2.0f;
-  return {255, static_cast<std::uint8_t>(78.0f * (1.0f - t) + 203.0f * t),
-          static_cast<std::uint8_t>(92.0f * (1.0f - t)), 255};
-}
-
-void DrawHealthBar(Engine::Renderer2D &renderer, Engine::Vector2 center,
-                   float width, float height, float ratio) {
-  ratio = std::clamp(ratio, 0.0f, 1.0f);
-  const Engine::Vector2 start{center.x - width * 0.5f, center.y};
-  const Engine::Vector2 end{center.x + width * 0.5f, center.y};
-  renderer.DrawLine(start, end, height + 4.0f, {25, 25, 32, 220});
-  renderer.DrawLine(start, end, height, {74, 74, 86, 255});
-  if (ratio > 0.0f) {
-    const Engine::Vector2 fillEnd{start.x + width * ratio, center.y};
-    renderer.DrawLine(start, fillEnd, height, HealthColor(ratio));
-  }
+  const Color ink = (card.suit == 1 || card.suit == 2) ? Red : Ink;
+  renderer.DrawText(CardRank(card.rank), {centerX - 24.0f, centerY - 15.0f}, 22, ink);
+  renderer.DrawText(std::string(1, CardSuit(card.suit)),
+                    {centerX + 2.0f, centerY - 15.0f}, 22, ink);
 }
 } // namespace
 
 ProceduralGame::ProceduralGame() : world_(*gameInstance_.GetWorld()) {
+  camera_.position = {12.0f, 12.0f, 12.0f};
+  camera_.target = {0.0f, 0.0f, 0.0f};
+  camera_.up = {0.0f, 1.0f, 0.0f};
+  camera_.fieldOfView = 12.5f;
+  camera_.projection = Engine::CameraProjection::Orthographic;
   RegisterGameplayTypes();
-  EnsureCoreEntities();
-}
-
-void ProceduralGame::Initialize() {
-  static_cast<void>(playerShotSound_.Build(PlayerShotPatch));
-  static_cast<void>(enemyShotSound_.Build(EnemyShotPatch));
-  static_cast<void>(impactSound_.Build(ImpactPatch));
-  static_cast<void>(playerShotSound_.Upload());
-  static_cast<void>(enemyShotSound_.Upload());
-  static_cast<void>(impactSound_.Upload());
-}
-
-void ProceduralGame::Shutdown() {
-  impactSound_.Unload();
-  enemyShotSound_.Unload();
-  playerShotSound_.Unload();
+  EnsureTable();
 }
 
 void ProceduralGame::RegisterGameplayTypes() {
   world_.RegisterComponent(
-      Engine::Gameplay::MakeComponentType<BaseGame::ArenaDirector>(
-          "ArenaDirector"));
-  world_.RegisterComponent(
-      Engine::Gameplay::MakeComponentType<BaseGame::PlayerMovement>(
-          "PlayerMovement"));
-  world_.RegisterComponent(
-      Engine::Gameplay::MakeComponentType<BaseGame::EnemyMovement>(
-          "EnemyMovement"));
-  world_.RegisterComponent(
-      Engine::Gameplay::MakeComponentType<BaseGame::PlayerWeapon>(
-          "PlayerWeapon"));
-  world_.RegisterComponent(
-      Engine::Gameplay::MakeComponentType<BaseGame::EnemyWeapon>(
-          "EnemyWeapon"));
-  world_.RegisterComponent(
-      Engine::Gameplay::MakeComponentType<BaseGame::ProjectileMovement>(
-          "ProjectileMovement"));
-  world_.RegisterComponent(
-      Engine::Gameplay::MakeComponentType<BaseGame::Health>("Health"));
-  world_.RegisterComponent(
-      Engine::Gameplay::MakeComponentType<BaseGame::ProjectileDamage>(
-          "ProjectileDamage"));
-
-  world_.RegisterEntity({BaseGame::ArenaDirectorEntityType,
-                         "ArenaDirector",
-                         {BaseGame::ArenaDirector::Type}});
+      Engine::Gameplay::MakeComponentType<Blackjack::Table>("BlackjackTable"));
   world_.RegisterEntity(
-      {BaseGame::PlayerEntityType,
-       "Player",
-       {BaseGame::PlayerMovement::Type, BaseGame::PlayerWeapon::Type,
-        BaseGame::Health::Type}});
-  world_.RegisterEntity(
-      {BaseGame::EnemyEntityType,
-       "Enemy",
-       {BaseGame::EnemyMovement::Type, BaseGame::EnemyWeapon::Type,
-        BaseGame::Health::Type}});
-  const std::vector<TypeID> projectileComponents{
-      BaseGame::ProjectileMovement::Type, BaseGame::ProjectileDamage::Type};
-  world_.RegisterEntity({BaseGame::PlayerProjectileEntityType,
-                         "PlayerProjectile", projectileComponents});
-  world_.RegisterEntity({BaseGame::EnemyProjectileEntityType, "EnemyProjectile",
-                         projectileComponents});
+      {Blackjack::TableEntityType, "BlackjackTable", {Blackjack::Table::Type}});
 }
 
-void ProceduralGame::EnsureCoreEntities() {
-  Entity *player = nullptr;
-  for (const ObjectID id : world_.Entities()) {
-    auto *entity = ObjectRef(id).Resolve();
-    if (!entity)
-      continue;
-    if (entity->GetTypeID() == BaseGame::PlayerEntityType) {
-      player = entity;
-      playerEntity_ = ObjectRef(id);
-    } else if (entity->GetTypeID() == BaseGame::ArenaDirectorEntityType) {
-      arenaDirector_ = entity->GetComponent<BaseGame::ArenaDirector>();
+void ProceduralGame::EnsureTable() {
+  for (const auto id : world_.Entities()) {
+    Engine::Gameplay::ObjectRef<Engine::Gameplay::Entity> entity(id);
+    auto *resolved = entity.Resolve();
+    if (resolved && resolved->GetTypeID() == Blackjack::TableEntityType) {
+      table_ = resolved->GetComponent<Blackjack::Table>();
+      return;
     }
   }
+  const auto entity = world_.Spawn(Blackjack::TableEntityType, "BlackjackTable");
+  world_.FlushSpawns();
+  if (auto *spawned = entity.Resolve())
+    table_ = spawned->GetComponent<Blackjack::Table>();
+}
 
-  if (!arenaDirector_.Resolve()) {
-    const ObjectRef director =
-        world_.Spawn(BaseGame::ArenaDirectorEntityType, "ArenaDirector");
-    world_.FlushSpawns();
-    Entity *entity = director.Resolve();
-    arenaDirector_ = entity->GetComponent<BaseGame::ArenaDirector>();
-  }
-
-  if (!player) {
-    playerEntity_ = world_.Spawn(BaseGame::PlayerEntityType, "Player");
-    world_.FlushSpawns();
-    player = playerEntity_.Resolve();
-    player->transform.position = {
-        static_cast<float>(GameConfig::PlayAreaWidth) * 0.5f,
-        static_cast<float>(GameConfig::PlayAreaHeight) * 0.5f};
-    player->GetComponent<BaseGame::Health>().Resolve()->Configure(
-        BaseGame::Faction::Player, PlayerMaxHealth);
-  }
-
-  playerMovement_ = player->GetComponent<BaseGame::PlayerMovement>();
-  playerWeapon_ = player->GetComponent<BaseGame::PlayerWeapon>();
-  playerHealth_ = player->GetComponent<BaseGame::Health>();
+void ProceduralGame::Initialize() {
+  audio_.Initialize();
+  audio_.PlayDeal();
 }
 
 void ProceduralGame::Update(const Engine::InputSystem &input, float deltaTime) {
-  ENGINE_PROFILE_SCOPE("BaseGame Update");
-  const PlayerCommand command = inputBindings_.BuildPlayerCommand(input);
-  auto *movement = playerMovement_.Resolve();
-  auto *weapon = playerWeapon_.Resolve();
-  if (movement) {
-    movement->SetCommand(command);
-    if (const auto *player = playerEntity_.Resolve()) {
-      movement->SetFacing(
-          MouseAimFromPlayer(player->transform.position, movement->Facing()));
-    }
-  }
-  if (weapon && movement) {
-    const Engine::Vector2 aim = movement->Facing();
-    weapon->SetTrigger(command.firing, aim);
-  }
-
+  ENGINE_PROFILE_SCOPE("Blackjack Update");
   world_.Update(deltaTime);
-  ProcessCollisionsAndLifetime();
-  ProcessFrameRequests();
-}
-
-ObjectRef ProceduralGame::SpawnEnemy(Engine::Vector2 position) {
-  const ObjectRef enemy = world_.Spawn(
-      BaseGame::EnemyEntityType,
-      "Enemy#" + std::to_string(gameInstance_.GetObjectManager()->LiveCount()));
-  world_.FlushSpawns();
-  auto *entity = enemy.Resolve();
-  entity->transform.position = position;
-  entity->GetComponent<BaseGame::EnemyMovement>().Resolve()->SetTarget(
-      playerEntity_);
-  entity->GetComponent<BaseGame::EnemyWeapon>().Resolve()->SetTarget(
-      playerEntity_);
-  entity->GetComponent<BaseGame::Health>().Resolve()->Configure(
-      BaseGame::Faction::Enemy, 3);
-  return enemy;
-}
-
-ObjectRef ProceduralGame::SpawnProjectile(TypeID type, Engine::Vector2 position,
-                                          Engine::Vector2 direction,
-                                          BaseGame::Faction faction) {
-  const ObjectRef projectile = world_.Spawn(
-      type,
-      (faction == BaseGame::Faction::Player ? "PlayerShot#" : "EnemyShot#") +
-          std::to_string(gameInstance_.GetObjectManager()->LiveCount()));
-  world_.FlushSpawns();
-  auto *entity = projectile.Resolve();
-  entity->transform.position = position;
-  const float speed = faction == BaseGame::Faction::Player ? 560.0f : 310.0f;
-  entity->GetComponent<BaseGame::ProjectileMovement>().Resolve()->Configure(
-      direction * speed, 3.0f);
-  entity->GetComponent<BaseGame::ProjectileDamage>().Resolve()->Configure(
-      faction, 1);
-  return projectile;
-}
-
-void ProceduralGame::ProcessFrameRequests() {
-  ENGINE_PROFILE_SCOPE("Process Frame Requests");
-  std::size_t enemyCount = 0;
-  for (const ObjectID id : world_.Entities()) {
-    const auto *entity = ObjectRef(id).Resolve();
-    if (entity && entity->GetTypeID() == BaseGame::EnemyEntityType)
-      ++enemyCount;
+  auto *table = table_.Resolve();
+  if (!table)
+    return;
+  const auto oldState = table->State();
+  const auto oldResult = table->Outcome();
+  if (input.WasPressed(Engine::Key::Q)) {
+    table->ResetBankroll();
+    audio_.PlayDeal();
+  } else if (input.WasPressed(Engine::Key::R)) {
+    table->StartRound();
+    if (table->State() == Blackjack::RoundState::PlayerTurn)
+      audio_.PlayDeal();
+  } else if (input.WasPressed(Engine::Key::W) &&
+             table->State() == Blackjack::RoundState::PlayerTurn) {
+    table->Hit();
+    if (table->State() == Blackjack::RoundState::RoundOver)
+      audio_.PlayLoss();
+    else
+      audio_.PlayDeal();
+  } else if (input.WasPressed(Engine::Key::S)) {
+    table->Stand();
   }
-
-  Engine::Vector2 spawnPosition;
-  if (auto *director = arenaDirector_.Resolve();
-      director && enemyCount < MaximumEnemies &&
-      director->ConsumeEnemySpawn(spawnPosition)) {
-    (void)SpawnEnemy(spawnPosition);
-  }
-
-  if (auto *weapon = playerWeapon_.Resolve()) {
-    Engine::Vector2 direction;
-    if (weapon->ConsumeShot(direction)) {
-      const auto *player = playerEntity_.Resolve();
-      (void)SpawnProjectile(BaseGame::PlayerProjectileEntityType,
-                            player->transform.position + direction * 17.0f,
-                            direction, BaseGame::Faction::Player);
-      playerShotSound_.Play(0.75f, 0.96f + direction.x * 0.04f, 0.5f);
-    }
-  }
-
-  const auto entityIDs = world_.Entities();
-  for (const ObjectID id : entityIDs) {
-    auto *entity = ObjectRef(id).Resolve();
-    if (!entity || entity->GetTypeID() != BaseGame::EnemyEntityType)
-      continue;
-    auto *weapon = entity->GetComponent<BaseGame::EnemyWeapon>().Resolve();
-    Engine::Vector2 direction;
-    if (weapon && weapon->ConsumeShot(direction)) {
-      (void)SpawnProjectile(BaseGame::EnemyProjectileEntityType,
-                            entity->transform.position + direction * 22.0f,
-                            direction, BaseGame::Faction::Enemy);
-      enemyShotSound_.Play(0.45f, 0.92f + direction.y * 0.05f, 0.5f);
-    }
-  }
-}
-
-void ProceduralGame::ProcessCollisionsAndLifetime() {
-  ENGINE_PROFILE_SCOPE("Collisions And Lifetime");
-  struct Target {
-    ObjectRef entity;
-    BaseGame::Health *health;
-    float radius;
-  };
-  std::vector<Target> targets;
-  std::vector<ObjectRef> projectiles;
-  for (const ObjectID id : world_.Entities()) {
-    auto *entity = ObjectRef(id).Resolve();
-    if (!entity)
-      continue;
-    if (entity->GetTypeID() == BaseGame::PlayerEntityType ||
-        entity->GetTypeID() == BaseGame::EnemyEntityType) {
-      targets.push_back(
-          {ObjectRef(id), entity->GetComponent<BaseGame::Health>().Resolve(),
-           entity->GetTypeID() == BaseGame::PlayerEntityType ? PlayerRadius
-                                                             : EnemyRadius});
-    } else if (entity->GetTypeID() == BaseGame::PlayerProjectileEntityType ||
-               entity->GetTypeID() == BaseGame::EnemyProjectileEntityType) {
-      projectiles.emplace_back(id);
-    }
-  }
-
-  for (const ObjectRef projectileRef : projectiles) {
-    auto *projectile = projectileRef.Resolve();
-    if (!projectile)
-      continue;
-    auto *movement =
-        projectile->GetComponent<BaseGame::ProjectileMovement>().Resolve();
-    auto *damage =
-        projectile->GetComponent<BaseGame::ProjectileDamage>().Resolve();
-    bool destroyProjectile = movement->IsExpired();
-    for (Target &target : targets) {
-      auto *targetEntity = target.entity.Resolve();
-      if (destroyProjectile || !targetEntity || !target.health ||
-          target.health->GetFaction() == damage->GetFaction())
-        continue;
-      const float hitRadius = target.radius + ProjectileRadius;
-      if (DistanceSquared(projectile->transform.position,
-                          targetEntity->transform.position) <=
-          hitRadius * hitRadius) {
-        target.health->Damage(damage->DamageAmount());
-        impactSound_.Play(0.55f, 0.95f, 0.5f);
-        destroyProjectile = true;
-      }
-    }
-    if (destroyProjectile)
-      world_.Destroy(projectileRef);
-  }
-
-  for (Target &target : targets) {
-    if (!target.health || !target.health->IsDead())
-      continue;
-    auto *entity = target.entity.Resolve();
-    if (entity && entity->GetTypeID() == BaseGame::PlayerEntityType) {
-      entity->transform.position = {
-          static_cast<float>(GameConfig::PlayAreaWidth) * 0.5f,
-          static_cast<float>(GameConfig::PlayAreaHeight) * 0.5f};
-      target.health->Configure(BaseGame::Faction::Player, PlayerMaxHealth);
-    } else {
-      world_.Destroy(target.entity);
-    }
-  }
-  world_.FlushSpawns();
+  if (oldState == Blackjack::RoundState::PlayerTurn &&
+      table->State() == Blackjack::RoundState::RoundOver &&
+      table->Outcome() != Blackjack::Result::Bust &&
+      table->Outcome() != Blackjack::Result::DealerWin &&
+      table->Outcome() != oldResult)
+    audio_.PlayWin();
+  else if (oldState == Blackjack::RoundState::PlayerTurn &&
+           table->State() == Blackjack::RoundState::RoundOver &&
+           table->Outcome() == Blackjack::Result::DealerWin)
+    audio_.PlayLoss();
 }
 
 Engine::Color ProceduralGame::GetClearColor() const {
@@ -458,112 +161,111 @@ Engine::Color ProceduralGame::GetClearColor() const {
 }
 
 void ProceduralGame::Render(Engine::RenderContext &context) const {
-  ENGINE_PROFILE_SCOPE("BaseGame Render");
-  Engine::Renderer2D &renderer = context.Draw2D();
-  DrawGrid(renderer);
+  ENGINE_PROFILE_SCOPE("Blackjack Render");
+  const auto *table = table_.Resolve();
+  if (!table)
+    return;
 
-  std::size_t entities = 0;
-  std::size_t enemies = 0;
-  for (const ObjectID id : world_.Entities()) {
-    const auto *entity = ObjectRef(id).Resolve();
-    if (!entity)
-      continue;
-    ++entities;
-    const TypeID type = entity->GetTypeID();
-    if (type == BaseGame::PlayerEntityType) {
-      renderer.DrawCircle(entity->transform.position, PlayerRadius,
-                          {74, 222, 156, 255});
-      if (const auto *movement =
-              entity->GetComponent<BaseGame::PlayerMovement>().Resolve())
-        renderer.DrawLine(entity->transform.position,
-                          entity->transform.position +
-                              movement->Facing() * 22.0f,
-                          3.0f, {245, 245, 245, 255});
-      DrawHealthBar(
-          renderer,
-          {entity->transform.position.x,
-           entity->transform.position.y - PlayerRadius - 10.0f},
-          42.0f, 5.0f,
-          HealthRatio(entity->GetComponent<BaseGame::Health>().Resolve()));
-    } else if (type == BaseGame::EnemyEntityType) {
-      ++enemies;
-      const auto *health = entity->GetComponent<BaseGame::Health>().Resolve();
-      const float healthRatio = HealthRatio(health);
-      renderer.DrawCircle(entity->transform.position, EnemyRadius,
-                          HealthColor(healthRatio));
-      renderer.DrawCircleOutline(entity->transform.position, EnemyRadius + 2.0f,
-                                 healthRatio > 0.5f
-                                     ? Engine::Color{190, 255, 140, 255}
-                                     : Engine::Color{255, 145, 85, 255});
-    } else if (type == BaseGame::PlayerProjectileEntityType) {
-      renderer.DrawCircle(entity->transform.position, ProjectileRadius,
-                          {255, 223, 92, 255});
-    } else if (type == BaseGame::EnemyProjectileEntityType) {
-      renderer.DrawCircle(entity->transform.position, ProjectileRadius,
-                          {255, 105, 180, 255});
+  auto &scene = context.Draw3D();
+  scene.Begin(camera_);
+  scene.DrawCube({0.0f, -0.20f, 0.0f}, {17.0f, 0.38f, 13.5f}, Felt);
+  scene.DrawCubeOutline({0.0f, 0.005f, 0.0f}, {16.5f, 0.08f, 13.0f}, Gold);
+  scene.DrawLine({-7.7f, 0.055f, 0.0f}, {7.7f, 0.055f, 0.0f},
+                 {100, 154, 119, 255});
+
+  const float dealerStart = -0.5f * static_cast<float>(table->DealerCount() - 1) * CardSpacing;
+  for (int i = 0; i < table->DealerCount(); ++i) {
+    const float offset = dealerStart + static_cast<float>(i) * CardSpacing;
+    const float x = DealerZ + offset;
+    const float z = DealerZ - offset;
+    const bool hidden = table->DealerCardHidden() && i == 1;
+    scene.DrawCube({x, 0.06f, z}, {0.98f, 0.10f, CardZ},
+                   hidden ? CardBack : Cream);
+    scene.DrawCubeOutline({x, 0.12f, z}, {1.00f, 0.025f, CardZ + 0.02f},
+                          hidden ? Gold : Color{220, 215, 195, 255});
+    if (hidden) {
+      for (float stripe = -0.55f; stripe <= 0.55f; stripe += 0.28f)
+        scene.DrawLine({x - 0.42f, 0.13f, z + stripe},
+                       {x + 0.42f, 0.13f, z + stripe + 0.22f}, Gold);
     }
   }
 
-  const auto *health = playerHealth_.Resolve();
-  renderer.DrawText("WASD: MOVE   AUTO FIRE   MOUSE: AIM", {24.0f, 22.0f}, 20,
-                    {220, 220, 225, 255});
-  renderer.DrawText("HP: " + std::to_string(health ? health->HitPoints() : 0) +
-                        "   ENEMIES: " + std::to_string(enemies) +
-                        "   ENTITIES: " + std::to_string(entities),
-                    {24.0f, 50.0f}, 20, {255, 203, 0, 255});
-#if !defined(GAME_RELEASE_BUILD)
-  renderer.DrawFramesPerSecond(renderer.GetWidth() - 100, 20);
-#endif
+  const float playerStart = -0.5f * static_cast<float>(table->PlayerCount() - 1) * CardSpacing;
+  for (int i = 0; i < table->PlayerCount(); ++i) {
+    const float offset = playerStart + static_cast<float>(i) * CardSpacing;
+    const float x = PlayerZ + offset;
+    const float z = PlayerZ - offset;
+    scene.DrawCube({x, 0.06f, z}, {0.98f, 0.10f, CardZ}, Cream);
+    scene.DrawCubeOutline({x, 0.12f, z}, {1.00f, 0.025f, CardZ + 0.02f},
+                          {220, 215, 195, 255});
+  }
+  scene.End();
+
+  auto &ui = context.Draw2D();
+  const float screenCenterX = static_cast<float>(context.GetWidth()) * 0.5f;
+  const float screenCenterY = static_cast<float>(context.GetHeight()) * 0.5f;
+  for (int i = 0; i < table->DealerCount(); ++i) {
+    const float offset = dealerStart + static_cast<float>(i) * CardSpacing;
+    const Vector2 screen = ProjectToScreen(
+        {DealerZ + offset, 0.14f, DealerZ - offset},
+        context.GetWidth(), context.GetHeight());
+    DrawCardOverlay(ui, screen.x, screen.y,
+                    table->DealerCards()[static_cast<std::size_t>(i)],
+                    table->DealerCardHidden() && i == 1);
+  }
+  for (int i = 0; i < table->PlayerCount(); ++i) {
+    const float offset = playerStart + static_cast<float>(i) * CardSpacing;
+    const Vector2 screen = ProjectToScreen(
+        {PlayerZ + offset, 0.14f, PlayerZ - offset},
+        context.GetWidth(), context.GetHeight());
+    DrawCardOverlay(ui, screen.x, screen.y,
+                    table->PlayerCards()[static_cast<std::size_t>(i)], false);
+  }
+
+  ui.DrawText("BLACKJACK", {36.0f, 24.0f}, 30, Gold);
+  ui.DrawText("3D TABLE  /  DEALER STANDS ON 17", {38.0f, 58.0f}, 16, Muted);
+  ui.DrawText("DEALER", {38.0f, 215.0f}, 18, Cream);
+  if (!table->DealerCardHidden())
+    ui.DrawText("TOTAL " + std::to_string(table->DealerTotal()),
+                {38.0f, 240.0f}, 16, Cream);
+  else
+    ui.DrawText("SHOWING " + CardRank(table->DealerCards()[0].rank),
+                {38.0f, 240.0f}, 16, Cream);
+
+  const std::string result = OutcomeText(table->Outcome());
+  if (!result.empty())
+    ui.DrawText(result, {screenCenterX - 125.0f, screenCenterY - 11.0f}, 20,
+                table->Outcome() == Blackjack::Result::DealerWin ||
+                        table->Outcome() == Blackjack::Result::Bust
+                    ? Color{242, 137, 122, 255}
+                    : Gold);
+
+  ui.DrawText("PLAYER  /  TOTAL " + std::to_string(table->PlayerTotal()),
+              {38.0f, static_cast<float>(context.GetHeight()) - 232.0f}, 18, Cream);
+  ui.DrawText("CHIPS  $" + std::to_string(table->Bankroll()) +
+                  "    BET  $" + std::to_string(table->Bet()) +
+                  "    HANDS  " + std::to_string(table->RoundsPlayed()),
+              {38.0f, static_cast<float>(context.GetHeight()) - 74.0f}, 18, Gold);
+  if (table->State() == Blackjack::RoundState::PlayerTurn) {
+    ui.DrawText("W HIT    S STAND", {38.0f, static_cast<float>(context.GetHeight()) - 43.0f}, 17, Cream);
+    ui.DrawText("R NEXT HAND    Q RESET", {250.0f, static_cast<float>(context.GetHeight()) - 43.0f}, 15, Muted);
+  } else if (table->Bankroll() < table->Bet()) {
+    ui.DrawText("OUT OF CHIPS - PRESS Q TO START OVER",
+                {38.0f, static_cast<float>(context.GetHeight()) - 43.0f}, 17, Cream);
+  } else {
+    ui.DrawText("PRESS R TO DEAL AGAIN    Q RESET BANKROLL",
+                {38.0f, static_cast<float>(context.GetHeight()) - 43.0f}, 17, Cream);
+  }
 }
 
+void ProceduralGame::Shutdown() { audio_.Shutdown(); }
+
 std::vector<std::byte> ProceduralGame::SaveResumeState() const {
-  ENGINE_PROFILE_SCOPE("Save Resume State");
   return world_.Save();
 }
 
 void ProceduralGame::ResumeFromState(std::span<const std::byte> state) {
-  ENGINE_PROFILE_SCOPE("Resume From State");
   world_.Resume(state);
-  playerEntity_ = {};
-  playerMovement_ = {};
-  playerWeapon_ = {};
-  playerHealth_ = {};
-  arenaDirector_ = {};
-  EnsureCoreEntities();
+  table_ = {};
+  EnsureTable();
 }
-
-#if defined(ENGINE_AUTOTESTS)
-void ProceduralGame::SerializeAutoTestState(Engine::Serializer &serializer) {
-  const auto *player = playerEntity_.Resolve();
-  int enemies = 0;
-  int playerProjectiles = 0;
-  int enemyProjectiles = 0;
-  for (const ObjectID id : world_.Entities()) {
-    const auto *entity = ObjectRef(id).Resolve();
-    if (!entity)
-      continue;
-    enemies += entity->GetTypeID() == BaseGame::EnemyEntityType;
-    playerProjectiles +=
-        entity->GetTypeID() == BaseGame::PlayerProjectileEntityType;
-    enemyProjectiles +=
-        entity->GetTypeID() == BaseGame::EnemyProjectileEntityType;
-  }
-  float x = player ? player->transform.position.x : 0.0f;
-  float y = player ? player->transform.position.y : 0.0f;
-  int entityIndex = static_cast<int>(playerEntity_.GetID().index);
-  int entityVersion = static_cast<int>(playerEntity_.GetID().version);
-  int objectCount =
-      static_cast<int>(gameInstance_.GetObjectManager()->LiveCount());
-  int hitPoints =
-      playerHealth_.Resolve() ? playerHealth_.Resolve()->HitPoints() : 0;
-  serializer.Value("player.position.x", x);
-  serializer.Value("player.position.y", y);
-  serializer.Value("player.entity.index", entityIndex);
-  serializer.Value("player.entity.version", entityVersion);
-  serializer.Value("player.hitPoints", hitPoints);
-  serializer.Value("world.enemyCount", enemies);
-  serializer.Value("world.playerProjectileCount", playerProjectiles);
-  serializer.Value("world.enemyProjectileCount", enemyProjectiles);
-  serializer.Value("world.objectCount", objectCount);
-}
-#endif

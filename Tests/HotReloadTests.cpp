@@ -86,7 +86,8 @@ int main(int argc, char **argv) {
     input.EnableAutoTestInput();
     input.SetAutoTestKeyDown(Engine::Key::Right, true);
     input.SetAutoTestKeyDown(Engine::Key::W, true);
-    for (int tick = 0; tick < 5; ++tick)
+    // EnemyWeapon starts with a 1.8-second cooldown after the first spawn.
+    for (int tick = 0; tick < 12; ++tick)
       game.Update(input, 0.25f);
 
     RecordingSerializer afterTick;
@@ -106,8 +107,15 @@ int main(int argc, char **argv) {
     Require(playerRef.Resolve() != nullptr,
             "Player ObjectRef did not resolve before hot reload.");
 
+    for (int tick = 0; tick < 5; ++tick)
+      game.ProcessReloadRequest();
+    RecordingSerializer whileInactive;
+    game.SerializeAutoTestState(whileInactive);
+    Require(whileInactive.values == afterTick.values,
+            "Background host maintenance advanced paused gameplay.");
+
     game.RequestReload();
-    game.ProcessAutoTestReload();
+    game.ProcessReloadRequest();
     Require(game.GetReloadStatus().find("Reloaded Game generation 2") !=
                 std::string::npos,
             "The second DLL generation was not loaded.");
@@ -150,7 +158,7 @@ int main(int argc, char **argv) {
 
     const auto secondDomain = reloadedInstance->GetObjectPoolDomain();
     game.RequestReload();
-    game.ProcessAutoTestReload();
+    game.ProcessReloadRequest();
     Require(!Engine::Gameplay::IsObjectPoolDomainAlive(secondDomain),
             "A prior Object pool domain survived a repeated hot reload.");
     const auto *thirdInstance = Engine::GameInstance::GetInstance();

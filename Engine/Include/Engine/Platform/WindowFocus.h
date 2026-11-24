@@ -8,5 +8,6 @@ namespace Engine {
 class ENGINE_API WindowFocus {
 public:
   [[nodiscard]] static bool FocusWindowByTitle(std::string_view windowTitle);
+  static void ReleaseMouseCapture();
 };
 } // namespace Engine

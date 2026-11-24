@@ -43,6 +43,24 @@ Use this frame flow:
 5. Apply `World::Spawn`/`World::Destroy` at the frame boundary, then configure
    newly resolvable components after `FlushSpawns`.
 
+## Input and mouse capture
+
+Translate input through `Engine::InputSystem`, including for first-person
+games. Use `input.SetMouseCaptured(true)` to request relative mouse look,
+`input.GetMouseDelta()` for aiming, and
+`input.IsMouseDown(Engine::MouseButton::Left)` for firing. Use
+`input.SetMouseCaptured(false)` when the game wants its cursor visible.
+
+Do not bypass these operations with Win32 `SetCursorPos`, `ClipCursor`,
+`SetCapture`, `GetAsyncKeyState`, `GetForegroundWindow` mouse warping, or direct
+raylib capture calls. Application handles TAB and focus changes, suspends
+gameplay updates/input while the cursor is released, and restores capture on
+return. Host reload processing remains active during this suspension. Do not
+recapture the mouse in render/UI callbacks. Capture and mouse deltas are
+transient platform state and must not be serialized in Components.
+
+## State and ownership
+
 Components must not spawn or destroy entities themselves. Their parameterless
 `Update(float)` resolves relationships through `ObjectRef`; it does not receive
 the manager or ownership of the `World`. Store pending requests as state when

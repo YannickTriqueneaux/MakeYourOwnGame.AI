@@ -1,6 +1,14 @@
 {
   "executable": "",
   "gameToolsMcpExecutable": "",
-  "model": "",
-  "reasoningEffort": "low"
+  "model": "gpt-6-luna",
+  "reasoningEffort": "low",
+  "pricing": {
+    "basis": "observedAverage",
+    "models": {
+      "gpt-6-luna": { "usdPerMillionTokens": 0.0215 },
+      "gpt-6.1-sol": { "usdPerMillionTokens": 0.1874 },
+      "gpt-5.6-luna": { "usdPerMillionTokens": 0.1121 }
+    }
+  }
 }
